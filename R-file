@@ -1,0 +1,228 @@
+#####     Assignment 1      #####
+####      Group 21          #####
+
+library("rvest"); library("stringr"); library("dplyr"); library("plyr") # Install all packages we need later on
+
+## Create a vector with numbers from 0 to 990 in steps of 10 
+
+x = c() # First: create an empty vector
+
+for(i in 0:99)
+{
+  x = append(x, i*10) # Second: create a loop, where we multiply every number from 0 to 99 with 10
+  
+}
+
+## We found out that every page shows 10 bribes. In total we need 1000 reports. This means we need to scan through every of the sites and extract the informations.
+## The good thing about it is, that they all have kind of the same structure: http://www.ipaidabribe.com/reports/paid?page= with 10, 20, 30 etc. at the end.
+## Therefore, we put together the vector we created above and the following "y"-vector
+
+y = "http://www.ipaidabribe.com/reports/paid?page="
+
+long.links = paste(y, x, sep = "") # Put x and y together
+
+df = NULL
+
+## Now we start with the "real" loop/function:
+
+for(i in 1:100)
+{
+  econ.link = long.links[i] # using the links, we created with the "x"- and "y"-vector
+
+
+links = read_html(econ.link, encoding = "UTF-8") %>%
+  html_nodes(".heading-3 a")%>%
+  html_attr(name = 'href')
+links
+
+
+econ.data = list()
+for(i in links[1:10]){ # we just have 10 reports each site, so the function just extracts these 10 informations
+link = read_html(i, encoding = "UTF-8")
+
+date = link %>% html_nodes(".date") %>% html_text()
+Date = date[1] # scrape the date
+
+location = link %>% html_nodes(".location") %>% html_text()
+Location = location[1] %>% str_replace_all(pattern = "\\r\\n" , replacement = " ")%>%
+  str_trim() # scrape the city
+
+City = link %>% html_nodes(".location") %>% html_text()
+City = City[1] %>% str_replace_all(pattern = "\\r\\n" , replacement = " ") %>% str_extract("[a-zA-Z]+[:space:]+[:punct:]*[a-zA-Z]*[:punct:]*[a-zA-Z]*[:punct:]*") %>% 
+    str_replace_all(pattern = "," , replacement = "") %>% 
+    str_trim() # scrape the city
+
+Region = link %>% html_nodes(".location") %>% html_text()
+Region = Region[1] %>% str_replace_all(pattern = "\\r\\n" , replacement = " ") %>%str_extract("[:punct:]+[:space:]+[a-zA-Z]+[:space:]*[a-zA-Z]*[:space:]*[a-zA-Z]*") %>% 
+  str_replace_all(pattern = "," , replacement = "") %>% 
+  str_trim() # scrape the region
+
+title = link %>% html_nodes(".heading-3 a") %>% html_text()
+Title = title[1] %>% 
+  str_replace_all(pattern = "\\n" , replacement = " ") %>%
+  str_trim()
+
+
+amount = link %>% html_nodes(".paid-amount span") %>% html_text()
+Amount = amount[1] %>% 
+  str_replace_all(pattern = "\\r\\n" , replacement = " ") %>% 
+  str_replace_all(pattern = "Paid INR " , replacement = "") %>%
+  str_replace_all(pattern = "," , replacement = "")
+
+department = link %>% html_nodes(".name a") %>% html_text()
+Department = department[1]
+
+views = link %>% html_nodes(".overview .views") %>% html_text()
+Views = views[1]%>% 
+  str_replace_all(pattern = " views" , replacement = "")
+
+trans_details = link %>% html_nodes(".details .transaction a") %>% html_text()
+Trans_details = trans_details[1]
+
+econ.data[[i]] = cbind(Date, Location, City, Region, Title, Amount, Department, Views, Trans_details) # Put all these informations together
+}
+
+
+df.econ = ldply(econ.data)
+df.econ$Amount = as.numeric(as.character(df.econ$Amount)) # Make the amount and views numeric, so that we can do some analysis on it
+df.econ$Views = as.numeric(as.character(df.econ$Views))
+df.econ$.id = NULL
+
+df = rbind(df, df.econ) # Finally combine each 10 reports with all the others
+
+}
+
+#NA: http://www.ipaidabribe.com/reports/paid/i-paid-rs-44-to-in#gsc.tab=0
+
+
+### Save as csv: ###
+setwd("C:\\Users\\Christian\\Desktop\\")
+#write.csv(df, file = "I paid a bribe2.csv", row.names = FALSE)
+
+df.bribe = read.csv(file="https://raw.githubusercontent.com/hallurp/Group21/master/I%20paid%20a%20bribe.csv", header=TRUE, sep=",")
+df.bribe = df.bribe[-c(46),] # Remove the row with an Amount of 8120303241 (which is some billion dollars...)
+### Change this number (46) when we rerun the program
+
+
+### Visualization: map ###
+
+library(raster)
+library(rgdal)
+library(rgeos)
+library(ggplot2)
+library(dplyr)
+
+df.bribe.amount = aggregate(df.bribe$Amount, by=list(Region=df.bribe$Region), FUN=sum)
+
+# df.bribe$Region[5] == df.bribe$Region[6]
+# df.bribe$Region = as.character(df.bribe$Region)
+
+###!!! Remember to put "grid" in the library !! ###
+
+### Get data
+india <- getData("GADM", country = "India", level = 1)
+
+map <- fortify(india)
+map$id <- as.integer(map$id)
+
+dat <- data.frame(id = 1:(length(india@data$NAME_1)), state = india@data$NAME_1)
+map_df <- inner_join(map, dat, by = "id")
+
+centers <- data.frame(gCentroid(india, byid = TRUE))
+centers$state <- dat$state
+
+map <- fortify(india)
+map$id <- as.integer(map$id)
+
+dat <- data.frame(id = 1:(length(india@data$NAME_1)), state = india@data$NAME_1)
+map_df <- inner_join(map, dat, by = "id")
+
+centers <- data.frame(gCentroid(india, byid = TRUE))
+centers$state <- dat$state
+
+map_df = inner_join(map_df, df.bribe.amount, by = c("state" = "Region"))
+
+### This is hrbrmstr's own function
+theme_map <- function (base_size = 12, base_family = "") {
+  theme_gray(base_size = base_size, base_family = base_family) %+replace% 
+    theme(
+      axis.line=element_blank(),
+      axis.text.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks=element_blank(),
+      axis.ticks.length=unit(0.3, "lines"),
+      axis.ticks.margin=unit(0.5, "lines"),
+      axis.title.x=element_blank(),
+      axis.title.y=element_blank(),
+      legend.background=element_rect(fill="white", colour=NA),
+      legend.key=element_rect(colour="white"),
+      legend.key.size=unit(1.5, "lines"),
+      legend.position="right",
+      legend.text=element_text(size=rel(1.2)),
+      legend.title=element_text(size=rel(1.4), face="bold", hjust=0),
+      panel.background=element_blank(),
+      panel.border=element_blank(),
+      panel.grid.major=element_blank(),
+      panel.grid.minor=element_blank(),
+      panel.margin=unit(0, "lines"),
+      plot.background=element_blank(),
+      plot.margin=unit(c(1, 1, 0.5, 0.5), "lines"),
+      plot.title=element_text(size=rel(1.8), face="bold", hjust=0.5),
+      strip.background=element_rect(fill="grey90", colour="grey50"),
+      strip.text.x=element_text(size=rel(0.8)),
+      strip.text.y=element_text(size=rel(0.8), angle=-90) 
+    )   
+}
+library("dplyr")
+library("viridis")
+
+ggplot(map_df, aes(fill=x)) +
+  geom_map(data = map_df, map = map_df,
+           aes(map_id = id, x = long, y = lat, group = group), color = "black", size = 0.15) +
+  geom_text(data = centers, aes(label = state, x = x, y = y), size = 2.5, colour = "black") +
+  coord_map() +
+  labs(x = "", y = "", title = "Bribes in India") +
+  theme_map() +
+scale_fill_viridis(trans = "log", breaks = c(100, 4000000), 
+                   labels = c("low", "high"),
+                   name = "Amount\n(log transformed)")
+
+
+## Visualization: Amount/Views/Days ##
+
+df.bribe.date = aggregate(df.bribe$Views, by=list(Date=df.bribe$Date), FUN=sum)
+colnames(df.bribe.date)[colnames(df.bribe.date)=="x"] <- "Views"
+df.bribe.date2 = aggregate(df.bribe$Amount, by = list(Date=df.bribe$Date), FUN = sum)
+colnames(df.bribe.date2)[colnames(df.bribe.date2)=="x"] <- "Amount"
+
+df.bribe.date3 = inner_join(df.bribe.date, df.bribe.date2)
+
+lct <- Sys.getlocale("LC_TIME"); Sys.setlocale("LC_TIME", "C")
+df.bribe.date3$Date = as.Date(df.bribe.date3$Date, format = "%B %d, %Y")
+df.bribe.date3$day = weekdays(df.bribe.date3$Date)
+
+h = (max(as.numeric(df.bribe$Amount)) - min(as.numeric(df.bribe$Amount)) / sqrt(dim(df.bribe)[1]))
+
+p = ggplot(df.bribe.date3, aes(x = Date, y = Views, fill = Amount))
+p +  geom_bar(color = "black", bindwith = h, stat = "identity") +  geom_text(aes(label=day), position=position_dodge(width=0.9), vjust=-0.25, size = 3.5) +
+  labs(title = "Views of the last 1000 reports for each day compared to the reported Amount", x = "", y = "Views") + 
+  theme(plot.title = element_text(lineheight=.5, face="bold"))
+
+## 
+
+df.bribe.report = aggregate(df.bribe$Views, by=list(Date=df.bribe$Date), FUN=sum)
+
+by_year_month = select(df.bribe, Title, Views, Amount, Date)
+by_year_month = group_by(by_year_month, Date)
+detach("package:dplyr", unload=TRUE) 
+by_year_month = summarise(by_year_month, count = n())
+
+## Investigation on October, 12: ##
+
+df.bribe.oct = df.bribe[!(df.bribe$Date != "October 12, 2015"),]
+df.bribe.oct2 = aggregate(df.bribe$Amount, by = list(Date=df.bribe$City), FUN = sum)
+# -> No special person, who made many reports on that
+df.bribe.oct3 = aggregate(df.bribe$Amount, by = list(Date=df.bribe$Department), FUN = sum)
+
+df.bribe.maha = df.bribe[!(df.bribe$Trans_details!= "Birth Certificate"),]
+df.bribe.maha2 = aggregate(df.bribe$Amount, by = list(Date=df.bribe$Date), FUN = sum)
